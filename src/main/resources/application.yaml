@@ -1,0 +1,43 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/taskflow}
+    username: ${DB_USERNAME:taskflow}
+    password: ${DB_PASSWORD}          # no default on purpose: must come from the environment
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 10000
+  jpa:
+    hibernate:
+      ddl-auto: validate              # Flyway owns the schema; Hibernate only checks it
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}             # base64, at least 32 bytes. App refuses to start without it
+    expiration-minutes: 15
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
+  storage:
+    directory: ${STORAGE_DIR:./data/uploads}
+
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
