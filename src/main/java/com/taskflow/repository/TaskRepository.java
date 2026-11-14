@@ -1,16 +1,19 @@
 package com.taskflow.repository;
 
 import com.taskflow.model.Task;
+import com.taskflow.model.TaskStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.List;
-
 public interface TaskRepository extends JpaRepository<Task, Long> {
 
-    List<Task> findByProjectIdOrderById(Long projectId);
+    Page<Task> findByProjectId(Long projectId, Pageable pageable);
+
+    Page<Task> findByProjectIdAndStatus(Long projectId, TaskStatus status, Pageable pageable);
 
     /** Used when someone is removed from a project: their tasks there become unassigned. */
     @Modifying(flushAutomatically = true, clearAutomatically = true)

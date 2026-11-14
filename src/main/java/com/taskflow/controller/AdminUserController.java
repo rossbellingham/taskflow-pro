@@ -1,5 +1,6 @@
 package com.taskflow.controller;
 
+import com.taskflow.dto.PageResponse;
 import com.taskflow.dto.UpdateRolesRequest;
 import com.taskflow.dto.UserResponse;
 import com.taskflow.service.UserService;
@@ -11,9 +12,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * Admin-only user management. SecurityConfig already restricts /api/admin/** to ROLE_ADMIN;
@@ -30,9 +30,11 @@ public class AdminUserController {
         this.userService = userService;
     }
 
+    /** Paginated: ?page=0&size=20 */
     @GetMapping
-    public List<UserResponse> listUsers() {
-        return userService.listUsers().stream().map(UserResponse::from).toList();
+    public PageResponse<UserResponse> listUsers(@RequestParam(defaultValue = "0") int page,
+                                                @RequestParam(defaultValue = "" + PageResponse.DEFAULT_SIZE) int size) {
+        return PageResponse.of(userService.listUsers(PageResponse.pageable(page, size)), UserResponse::from);
     }
 
     @PutMapping("/{id}/roles")

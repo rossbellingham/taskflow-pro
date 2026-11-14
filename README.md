@@ -11,10 +11,11 @@ against a real PostgreSQL in Docker.
 ## Features
 
 - **Authentication:** register, log in and log out; server-side sessions; BCrypt password hashing
+- **Account security:** change your own password; failed logins are rate limited
 - **Swagger UI:** an interactive page for trying every endpoint from the browser
 - **Roles:** `ROLE_ADMIN`, `ROLE_MANAGER`, `ROLE_EMPLOYEE`, with admin endpoints to manage them
 - **Projects:** a manager plus a group of employees; only members can see a project
-- **Tasks:** title, description, status, priority, due date, assignee
+- **Tasks:** title, description, status, priority, due date, assignee, and comments
 - **Typed task links:** `BLOCKS`, `DUPLICATES` and `RELATES_TO`, within one project
 - **Attachments:** files stored on disk; employees access only their own uploads, while the project
   manager and admins can access every file in the project
@@ -30,7 +31,7 @@ against a real PostgreSQL in Docker.
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/rossbellingham/taskflow-pro.git
+git clone https://github.com/YOUR-USERNAME/taskflow-pro.git
 cd taskflow-pro
 cp .env.example .env        # then edit .env and set DB_PASSWORD
 ```
@@ -91,10 +92,13 @@ Endpoints other than the public auth ones need a logged-in session (the `JSESSIO
 | POST | `/api/auth/login` | anyone |
 | POST | `/api/auth/logout` | logged-in user |
 | GET | `/api/auth/me` | any logged-in user |
+| PUT | `/api/auth/password` | logged-in user (needs the current password) |
 | GET | `/api/admin/users` | admin |
 | PUT | `/api/admin/users/{id}/roles` | admin |
 | POST | `/api/projects` | admin (names the manager) |
 | GET | `/api/projects`, `/api/projects/{id}` | project participants (admins: all) |
+| PUT | `/api/projects/{id}` | project manager, admin (only an admin can change the manager) |
+| DELETE | `/api/projects/{id}` | admin (removes its tasks, comments and files too) |
 | PUT / DELETE | `/api/projects/{id}/members/{userId}` | project manager, admin |
 | POST / GET | `/api/projects/{id}/tasks` (`?status=`) | project participants |
 | GET | `/api/tasks/{id}` | project participants |
@@ -104,6 +108,13 @@ Endpoints other than the public auth ones need a logged-in session (the `JSESSIO
 | POST | `/api/tasks/{id}/attachments` (multipart, part `file`) | project participants |
 | GET | `/api/tasks/{id}/attachments` | own uploads; manager and admin see all |
 | GET / DELETE | `/api/attachments/{id}` | uploader, project manager, admin |
+| POST / GET | `/api/tasks/{id}/comments` | project participants |
+| PUT | `/api/comments/{id}` | the comment's author |
+| DELETE | `/api/comments/{id}` | author, project manager, admin |
+
+The project, task, comment and admin-user lists are paginated: add `?page=0&size=20` (pages start at 0,
+size is capped at 100). They return `content` plus `page`, `size`, `totalElements` and `totalPages`,
+ordered by id (oldest first).
 
 ### Trying it: Swagger UI (easiest)
 
@@ -124,7 +135,7 @@ TOKEN=$(grep XSRF-TOKEN jar.txt | awk '{print $7}')
 # 2. log in (stores the session cookie too)
 curl -b jar.txt -c jar.txt -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" -H "X-XSRF-TOKEN: $TOKEN" \
-  -d '{"username":"user","password":"your-password"}'
+  -d '{"username":"ross","password":"your-password"}'
 
 # 3. reads need only the cookies; writes also need the header
 curl -b jar.txt http://localhost:8080/api/projects
@@ -141,6 +152,10 @@ Flyway migrations, and exercise the API end to end:
 
 - an admin creates a project with a manager, the manager adds a member, and the member creates a task
 - a member uploads a file; another member cannot see or download it, but the project manager can
+- session, CSRF and logout rules; a demoted admin loses access without logging in again
+- login lockout after repeated failures, and changing a password
+- who can edit and delete tasks, typed task links, and removing a member unassigning their tasks
+- editing and deleting projects (including cleaning up files on disk), comments, and pagination
 
 ## Design decisions
 
@@ -150,6 +165,14 @@ Flyway migrations, and exercise the API end to end:
 - **CSRF protection is on**, because cookies are sent automatically. The token travels in a readable
   `XSRF-TOKEN` cookie that scripts echo back in the `X-XSRF-TOKEN` header. Registration is the only
   exempt write, since it has no session to hijack. Session cookies are `HttpOnly` and `SameSite=Lax`.
+- **Login rate limiting.** 5 failed attempts for a username (or 20 from one IP) lock further attempts
+  for the rest of a 15-minute window, even with the right password (HTTP 429 with `Retry-After`).
+  Counters are in memory, so they reset on restart and aren't shared between servers; a multi-server
+  deployment would need Redis. The same limit applies to wrong current-password guesses when changing a
+  password.
+- **Password changes need the current password**, so a stolen session alone can't take over an account.
+- **Pagination is capped and sorted by id only**, so a client can't request unbounded pages or sort by an
+  arbitrary column.
 - **A new session id is issued at login** (session fixation defence).
 - **Roles are re-read from the database on every request**, not trusted from the session, so a
   demoted or deleted user loses access immediately. Covered by a test.
@@ -168,10 +191,9 @@ Flyway migrations, and exercise the API end to end:
 ## Roadmap
 
 - A server-rendered web UI (Thymeleaf) alongside the API
-- Rate limiting on login
-- Pagination on list endpoints
-- Project deletion and task comments
-- More integration tests for the edit and delete rules
+- Ending a user's other sessions when their password changes
+- Searching and sorting task lists
+- A Dockerfile for the app itself
 
 ## License
 

@@ -1,18 +1,19 @@
 package com.taskflow.service;
 
 import com.taskflow.dto.RegisterRequest;
+import com.taskflow.exception.BadRequestException;
 import com.taskflow.exception.ConflictException;
 import com.taskflow.exception.NotFoundException;
 import com.taskflow.model.Role;
 import com.taskflow.model.User;
 import com.taskflow.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.Set;
 
 @Service
@@ -49,9 +50,32 @@ public class UserService {
         }
     }
 
+    /**
+     * Changes the password if currentPassword is correct.
+     *
+     * @return false when currentPassword is wrong (the caller counts that as a failed attempt)
+     * @throws BadRequestException when the new password is the same as the current one
+     */
+    @Transactional
+    public boolean changePassword(String username, String currentPassword, String newPassword) {
+        User user = userRepository.findByUsernameIgnoreCase(username)
+                .orElseThrow(() -> new NotFoundException("User not found"));
+
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            return false;
+        }
+        if (passwordEncoder.matches(newPassword, user.getPassword())) {
+            throw new BadRequestException("The new password must be different from the current one");
+        }
+
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+        return true;
+    }
+
     @Transactional(readOnly = true)
-    public List<User> listUsers() {
-        return userRepository.findAll(Sort.by("id"));
+    public Page<User> listUsers(Pageable pageable) {
+        return userRepository.findAll(pageable);
     }
 
     /** Replaces the user's roles with exactly the given set. */

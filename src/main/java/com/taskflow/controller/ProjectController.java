@@ -1,7 +1,9 @@
 package com.taskflow.controller;
 
+import com.taskflow.dto.PageResponse;
 import com.taskflow.dto.ProjectDtos.CreateProjectRequest;
 import com.taskflow.dto.ProjectDtos.ProjectResponse;
+import com.taskflow.dto.ProjectDtos.UpdateProjectRequest;
 import com.taskflow.service.ProjectService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -15,9 +17,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/projects")
@@ -36,15 +37,36 @@ public class ProjectController {
         return ResponseEntity.status(HttpStatus.CREATED).body(projectService.create(request));
     }
 
-    /** Admins see every project; everyone else sees projects they manage or belong to. */
+    /**
+     * Admins see every project; everyone else sees projects they manage or belong to.
+     * Paginated: ?page=0&size=20
+     */
     @GetMapping
-    public List<ProjectResponse> list(Authentication auth) {
-        return projectService.list(auth);
+    public PageResponse<ProjectResponse> list(@RequestParam(defaultValue = "0") int page,
+                                              @RequestParam(defaultValue = "" + PageResponse.DEFAULT_SIZE) int size,
+                                              Authentication auth) {
+        return projectService.list(auth, PageResponse.pageable(page, size));
     }
 
     @GetMapping("/{projectId}")
     public ProjectResponse get(@PathVariable Long projectId, Authentication auth) {
         return projectService.get(projectId, auth);
+    }
+
+    /** Project manager or admin can rename; only an admin can change the manager. */
+    @PutMapping("/{projectId}")
+    public ProjectResponse update(@PathVariable Long projectId,
+                                  @Valid @RequestBody UpdateProjectRequest request,
+                                  Authentication auth) {
+        return projectService.update(projectId, request, auth);
+    }
+
+    /** Admin only. Permanently deletes the project, its tasks, comments and attached files. */
+    @DeleteMapping("/{projectId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> delete(@PathVariable Long projectId) {
+        projectService.delete(projectId);
+        return ResponseEntity.noContent().build();
     }
 
     /** Project manager or admin. */

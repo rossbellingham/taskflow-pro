@@ -1,6 +1,8 @@
 package com.taskflow.exception;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -55,6 +57,15 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleForbidden(RuntimeException ex) {
         String detail = ex instanceof ForbiddenException ? ex.getMessage() : "Access denied";
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, detail);
+    }
+
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ProblemDetail> handleTooManyRequests(TooManyRequestsException ex) {
+        ProblemDetail body = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS,
+                "Too many failed attempts. Try again later.");
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+                .body(body);
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)

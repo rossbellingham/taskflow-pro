@@ -22,6 +22,16 @@ public final class ProjectDtos {
             Set<Long> memberIds
     ) {}
 
+    /**
+     * managerId is optional: leave it out (or send the current manager) to keep the manager as is.
+     * Only an admin may change the manager.
+     */
+    public record UpdateProjectRequest(
+            @NotBlank @Size(max = 100) String name,
+            @Size(max = 2000) String description,
+            Long managerId
+    ) {}
+
     public record ProjectResponse(
             Long id,
             String name,

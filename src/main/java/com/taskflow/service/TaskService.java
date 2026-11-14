@@ -1,5 +1,6 @@
 package com.taskflow.service;
 
+import com.taskflow.dto.PageResponse;
 import com.taskflow.dto.TaskDtos.LinkRequest;
 import com.taskflow.dto.TaskDtos.LinkResponse;
 import com.taskflow.dto.TaskDtos.TaskDetailResponse;
@@ -22,6 +23,8 @@ import com.taskflow.repository.TaskLinkRepository;
 import com.taskflow.repository.TaskRepository;
 import com.taskflow.repository.UserRepository;
 import com.taskflow.service.AccessService.Access;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,15 +78,16 @@ public class TaskService {
     }
 
     @Transactional(readOnly = true)
-    public List<TaskResponse> list(Long projectId, TaskStatus statusFilter, Authentication auth) {
+    public PageResponse<TaskResponse> list(Long projectId, TaskStatus statusFilter, Pageable pageable,
+                                           Authentication auth) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new NotFoundException("Not found"));
         accessService.requireView(project, auth);
 
-        return taskRepository.findByProjectIdOrderById(projectId).stream()
-                .filter(t -> statusFilter == null || t.getStatus() == statusFilter)
-                .map(TaskResponse::from)
-                .toList();
+        Page<Task> page = statusFilter == null
+                ? taskRepository.findByProjectId(projectId, pageable)
+                : taskRepository.findByProjectIdAndStatus(projectId, statusFilter, pageable);
+        return PageResponse.of(page, TaskResponse::from);
     }
 
     @Transactional(readOnly = true)

@@ -1,5 +1,6 @@
 package com.taskflow.controller;
 
+import com.taskflow.dto.PageResponse;
 import com.taskflow.dto.TaskDtos.LinkRequest;
 import com.taskflow.dto.TaskDtos.LinkResponse;
 import com.taskflow.dto.TaskDtos.TaskDetailResponse;
@@ -21,8 +22,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 @RestController
 @RequestMapping("/api")
 public class TaskController {
@@ -40,12 +39,17 @@ public class TaskController {
         return ResponseEntity.status(HttpStatus.CREATED).body(taskService.create(projectId, request, auth));
     }
 
-    /** Optional filter: ?status=TODO | IN_PROGRESS | IN_REVIEW | DONE */
+    /**
+     * Optional filter: ?status=TODO | IN_PROGRESS | IN_REVIEW | DONE
+     * Paginated: ?page=0&size=20 (size is capped at 100)
+     */
     @GetMapping("/projects/{projectId}/tasks")
-    public List<TaskResponse> list(@PathVariable Long projectId,
-                                   @RequestParam(required = false) TaskStatus status,
-                                   Authentication auth) {
-        return taskService.list(projectId, status, auth);
+    public PageResponse<TaskResponse> list(@PathVariable Long projectId,
+                                           @RequestParam(required = false) TaskStatus status,
+                                           @RequestParam(defaultValue = "0") int page,
+                                           @RequestParam(defaultValue = "" + PageResponse.DEFAULT_SIZE) int size,
+                                           Authentication auth) {
+        return taskService.list(projectId, status, PageResponse.pageable(page, size), auth);
     }
 
     @GetMapping("/tasks/{taskId}")
