@@ -2,9 +2,11 @@ package com.taskflow.controller;
 
 import com.taskflow.dto.CommentDtos.CommentRequest;
 import com.taskflow.dto.CommentDtos.CommentResponse;
+import com.taskflow.dto.CommentDtos.MentionResponse;
 import com.taskflow.dto.PageResponse;
 import com.taskflow.service.CommentService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -42,6 +44,18 @@ public class CommentController {
                                               @RequestParam(defaultValue = "" + PageResponse.DEFAULT_SIZE) int size,
                                               Authentication auth) {
         return commentService.list(taskId, PageResponse.pageable(page, size), auth);
+    }
+
+    /**
+     * The comments that tag you with @username, newest first, in projects you can still see.
+     * Paginated: ?page=0&size=20
+     */
+    @GetMapping("/mentions")
+    public PageResponse<MentionResponse> myMentions(@RequestParam(defaultValue = "0") int page,
+                                                    @RequestParam(defaultValue = "" + PageResponse.DEFAULT_SIZE) int size,
+                                                    Authentication auth) {
+        return commentService.mentionsOfCurrentUser(
+                PageResponse.pageable(page, size, Sort.by(Sort.Direction.DESC, "id")), auth);
     }
 
     /** Author only. */

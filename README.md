@@ -16,6 +16,10 @@ against a real PostgreSQL in Docker.
 - **Roles:** `ROLE_ADMIN`, `ROLE_MANAGER`, `ROLE_EMPLOYEE`, with admin endpoints to manage them
 - **Projects:** a manager plus a group of employees; only members can see a project
 - **Tasks:** title, description, status, priority, due date, assignee, and comments
+- **@mentions:** tag a project participant in a comment with `@username`; tagged people find it in their
+  inbox (`GET /api/mentions`)
+- **Task search and sorting:** text search, filters (status, priority, assignee, due dates) and sorting by
+  importance, all combinable with pagination
 - **Typed task links:** `BLOCKS`, `DUPLICATES` and `RELATES_TO`, within one project
 - **Attachments:** files stored on disk; employees access only their own uploads, while the project
   manager and admins can access every file in the project
@@ -109,8 +113,29 @@ Endpoints other than the public auth ones need a logged-in session (the `JSESSIO
 | GET | `/api/tasks/{id}/attachments` | own uploads; manager and admin see all |
 | GET / DELETE | `/api/attachments/{id}` | uploader, project manager, admin |
 | POST / GET | `/api/tasks/{id}/comments` | project participants |
+| GET | `/api/mentions` | logged-in user (comments that tag you, newest first) |
 | PUT | `/api/comments/{id}` | the comment's author |
 | DELETE | `/api/comments/{id}` | author, project manager, admin |
+
+**Searching and sorting tasks.** `GET /api/projects/{id}/tasks` accepts these optional parameters, and
+those you give must all match:
+
+| Parameter | Meaning |
+|---|---|
+| `q` | text in the title or description (case-insensitive, max 100 characters) |
+| `status` | `TODO`, `IN_PROGRESS`, `IN_REVIEW` or `DONE` |
+| `priority` | `LOW`, `MEDIUM`, `HIGH` or `URGENT` |
+| `assigneeId` | tasks assigned to this user id |
+| `unassigned` | `true` for tasks nobody is assigned to |
+| `dueBefore`, `dueAfter` | `YYYY-MM-DD`, inclusive; tasks without a due date never match |
+| `sort` | `field` or `field,asc` or `field,desc`. Fields: `id`, `title`, `status`, `priority`, `dueDate`, `createdAt`, `updatedAt`. Default `id,asc` |
+
+For example: `?q=login&priority=HIGH&sort=dueDate,asc&page=0&size=20`.
+
+**Mentions.** Write `@username` in a comment to tag the project's manager or one of its members. Names
+that don't match a participant (unknown names, people outside the project, email addresses, yourself)
+stay plain text without an error. Editing a comment recalculates the tags. There are no email or push
+notifications: tagged people see the comment in `GET /api/mentions` while they can still see the project.
 
 The project, task, comment and admin-user lists are paginated: add `?page=0&size=20` (pages start at 0,
 size is capped at 100). They return `content` plus `page`, `size`, `totalElements` and `totalPages`,
@@ -156,6 +181,7 @@ Flyway migrations, and exercise the API end to end:
 - login lockout after repeated failures, and changing a password
 - who can edit and delete tasks, typed task links, and removing a member unassigning their tasks
 - editing and deleting projects (including cleaning up files on disk), comments, and pagination
+- @mentions (who gets tagged, who is ignored, the inbox) and task search, filters and sorting
 
 ## Design decisions
 
@@ -171,8 +197,15 @@ Flyway migrations, and exercise the API end to end:
   deployment would need Redis. The same limit applies to wrong current-password guesses when changing a
   password.
 - **Password changes need the current password**, so a stolen session alone can't take over an account.
-- **Pagination is capped and sorted by id only**, so a client can't request unbounded pages or sort by an
-  arbitrary column.
+- **Pagination is capped**, so a client can't request unbounded pages.
+- **Sorting accepts a fixed list of fields**, never raw column names, so clients can't probe the schema or
+  crash the query. Priority and status sort by importance through read-only columns that PostgreSQL
+  calculates from the stored word (alphabetical order would put `LOW` after `HIGH`).
+- **Search text is escaped**, so `%` and `_` typed by a user are matched literally and not as wildcards.
+  Searching with `LIKE '%text%'` is fine at this size; a much larger dataset would call for PostgreSQL
+  full-text search or a trigram index.
+- **Mentions are stored when the comment is written**, in their own table, so the inbox is a simple
+  indexed query. Tags only resolve to people who are in the project at that moment.
 - **A new session id is issued at login** (session fixation defence).
 - **Roles are re-read from the database on every request**, not trusted from the session, so a
   demoted or deleted user loses access immediately. Covered by a test.
@@ -192,5 +225,6 @@ Flyway migrations, and exercise the API end to end:
 
 - A server-rendered web UI (Thymeleaf) alongside the API
 - Ending a user's other sessions when their password changes
-- Searching and sorting task lists
+- Email or push notifications for mentions
+- A "my tasks across all projects" view
 - A Dockerfile for the app itself

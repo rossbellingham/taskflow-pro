@@ -21,6 +21,7 @@ import com.taskflow.repository.AttachmentRepository;
 import com.taskflow.repository.ProjectRepository;
 import com.taskflow.repository.TaskLinkRepository;
 import com.taskflow.repository.TaskRepository;
+import com.taskflow.repository.TaskSpecifications;
 import com.taskflow.repository.UserRepository;
 import com.taskflow.service.AccessService.Access;
 import org.springframework.data.domain.Page;
@@ -39,6 +40,8 @@ import java.util.List;
  */
 @Service
 public class TaskService {
+
+    private static final int MAX_SEARCH_TEXT = 100;
 
     private final TaskRepository taskRepository;
     private final TaskLinkRepository taskLinkRepository;
@@ -78,16 +81,19 @@ public class TaskService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<TaskResponse> list(Long projectId, TaskStatus statusFilter, Pageable pageable,
+    public PageResponse<TaskResponse> list(Long projectId, TaskSearch search, String sort, int page, int size,
                                            Authentication auth) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new NotFoundException("Not found"));
         accessService.requireView(project, auth);
 
-        Page<Task> page = statusFilter == null
-                ? taskRepository.findByProjectId(projectId, pageable)
-                : taskRepository.findByProjectIdAndStatus(projectId, statusFilter, pageable);
-        return PageResponse.of(page, TaskResponse::from);
+        if (search.q() != null && search.q().length() > MAX_SEARCH_TEXT) {
+            throw new BadRequestException("Search text can be at most " + MAX_SEARCH_TEXT + " characters");
+        }
+
+        Pageable pageable = PageResponse.pageable(page, size, TaskSorting.parse(sort));
+        Page<Task> result = taskRepository.findAll(TaskSpecifications.matching(projectId, search), pageable);
+        return PageResponse.of(result, TaskResponse::from);
     }
 
     @Transactional(readOnly = true)

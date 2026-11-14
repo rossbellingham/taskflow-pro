@@ -26,10 +26,15 @@ public record PageResponse<T>(List<T> content, int page, int size, long totalEle
                 page.getTotalPages());
     }
 
-    /** Builds a safe Pageable: negative pages become 0 and the size is kept between 1 and MAX_SIZE. */
+    /** Builds a safe Pageable ordered by id: negative pages become 0 and the size is kept between 1 and MAX_SIZE. */
     public static Pageable pageable(int page, int size) {
+        return pageable(page, size, Sort.by("id"));
+    }
+
+    /** Same safety limits, with a caller-chosen (already validated) sort. */
+    public static Pageable pageable(int page, int size, Sort sort) {
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), MAX_SIZE);
-        return PageRequest.of(safePage, safeSize, Sort.by("id"));
+        return PageRequest.of(safePage, safeSize, sort);
     }
 }

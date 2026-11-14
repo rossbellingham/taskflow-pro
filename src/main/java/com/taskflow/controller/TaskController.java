@@ -6,9 +6,12 @@ import com.taskflow.dto.TaskDtos.LinkResponse;
 import com.taskflow.dto.TaskDtos.TaskDetailResponse;
 import com.taskflow.dto.TaskDtos.TaskRequest;
 import com.taskflow.dto.TaskDtos.TaskResponse;
+import com.taskflow.model.TaskPriority;
 import com.taskflow.model.TaskStatus;
+import com.taskflow.service.TaskSearch;
 import com.taskflow.service.TaskService;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api")
@@ -40,16 +45,39 @@ public class TaskController {
     }
 
     /**
-     * Optional filter: ?status=TODO | IN_PROGRESS | IN_REVIEW | DONE
-     * Paginated: ?page=0&size=20 (size is capped at 100)
+     * Search, filter and sort a project's tasks. Every parameter is optional and the ones you give must
+     * all match.
+     *
+     * <pre>
+     * q           text in the title or description (case-insensitive)
+     * status      TODO | IN_PROGRESS | IN_REVIEW | DONE
+     * priority    LOW | MEDIUM | HIGH | URGENT
+     * assigneeId  tasks assigned to this user id
+     * unassigned  true = only tasks nobody is assigned to
+     * dueBefore   YYYY-MM-DD, due on or before
+     * dueAfter    YYYY-MM-DD, due on or after
+     * sort        field or field,asc or field,desc; fields: id, title, status, priority, dueDate,
+     *             createdAt, updatedAt (priority and status sort by importance); default id,asc
+     * page, size  pagination (size is capped at 100)
+     * </pre>
      */
     @GetMapping("/projects/{projectId}/tasks")
     public PageResponse<TaskResponse> list(@PathVariable Long projectId,
+                                           @RequestParam(required = false) String q,
                                            @RequestParam(required = false) TaskStatus status,
+                                           @RequestParam(required = false) TaskPriority priority,
+                                           @RequestParam(required = false) Long assigneeId,
+                                           @RequestParam(defaultValue = "false") boolean unassigned,
+                                           @RequestParam(required = false)
+                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dueBefore,
+                                           @RequestParam(required = false)
+                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dueAfter,
+                                           @RequestParam(defaultValue = "id,asc") String sort,
                                            @RequestParam(defaultValue = "0") int page,
                                            @RequestParam(defaultValue = "" + PageResponse.DEFAULT_SIZE) int size,
                                            Authentication auth) {
-        return taskService.list(projectId, status, PageResponse.pageable(page, size), auth);
+        TaskSearch search = new TaskSearch(q, status, priority, assigneeId, unassigned, dueBefore, dueAfter);
+        return taskService.list(projectId, search, sort, page, size, auth);
     }
 
     @GetMapping("/tasks/{taskId}")

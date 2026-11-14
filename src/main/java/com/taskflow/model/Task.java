@@ -55,6 +55,13 @@ public class Task {
     @JoinColumn(name = "created_by_id", nullable = false, updatable = false)
     private User createdBy;
 
+    // Calculated by PostgreSQL from priority/status (see V5). Read-only: used only to sort by importance.
+    @Column(name = "priority_rank", insertable = false, updatable = false)
+    private Integer priorityRank;
+
+    @Column(name = "status_rank", insertable = false, updatable = false)
+    private Integer statusRank;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
