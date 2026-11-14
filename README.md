@@ -31,7 +31,7 @@ against a real PostgreSQL in Docker.
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/taskflow-pro.git
+git clone https://github.com/rossbellingham/taskflow-pro.git
 cd taskflow-pro
 cp .env.example .env        # then edit .env and set DB_PASSWORD
 ```
@@ -194,7 +194,3 @@ Flyway migrations, and exercise the API end to end:
 - Ending a user's other sessions when their password changes
 - Searching and sorting task lists
 - A Dockerfile for the app itself
-
-## License
-
-Choose a licence (for example MIT) and add a `LICENSE` file, or remove this section.
