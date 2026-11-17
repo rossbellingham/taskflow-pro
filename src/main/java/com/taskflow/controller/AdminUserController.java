@@ -1,8 +1,10 @@
 package com.taskflow.controller;
 
 import com.taskflow.dto.PageResponse;
+import com.taskflow.dto.ResetPasswordRequest;
 import com.taskflow.dto.UpdateRolesRequest;
 import com.taskflow.dto.UserResponse;
+import com.taskflow.security.LoginAttemptService;
 import com.taskflow.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -15,6 +17,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * Admin-only user management. SecurityConfig already restricts /api/admin/** to ROLE_ADMIN;
  * @PreAuthorize repeats that on the controller itself as a second layer.
@@ -25,9 +30,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminUserController {
 
     private final UserService userService;
+    private final LoginAttemptService loginAttempts;
 
-    public AdminUserController(UserService userService) {
+    public AdminUserController(UserService userService, LoginAttemptService loginAttempts) {
         this.userService = userService;
+        this.loginAttempts = loginAttempts;
     }
 
     /** Paginated: ?page=0&size=20 */
@@ -42,5 +49,34 @@ public class AdminUserController {
                                     @Valid @RequestBody UpdateRolesRequest request,
                                     Authentication authentication) {
         return UserResponse.from(userService.updateRoles(id, request.roles(), authentication.getName()));
+    }
+
+    /**
+     * Resets someone else's password (for example after they forgot it). Send {"temporaryPassword":"..."}
+     * (10 to 72 characters), or {} to have the server generate one, which is returned once in the response.
+     *
+     * Their login lockout, if any, is cleared. There is no email, so the admin must pass the password to
+     * the user themselves. Existing sessions of that user keep working.
+     * Resetting your own password here is refused; use PUT /api/auth/password.
+     */
+    @PutMapping("/{id}/password")
+    public Map<String, Object> resetPassword(@PathVariable Long id,
+                                             @Valid @RequestBody ResetPasswordRequest request,
+                                             Authentication authentication) {
+        UserService.PasswordReset reset =
+                userService.resetPasswordByAdmin(id, request.temporaryPassword(), authentication.getName());
+
+        // The user may be locked out after failed guesses, which is a likely reason for the reset
+        String key = reset.username().toLowerCase();
+        loginAttempts.recordLoginSuccess(key);
+        loginAttempts.recordPasswordChangeSuccess(key);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", id);
+        body.put("username", reset.username());
+        if (reset.generatedPassword() != null) {
+            body.put("temporaryPassword", reset.generatedPassword());
+        }
+        return body;
     }
 }
