@@ -1,5 +1,6 @@
 package com.taskflow.config;
 
+import com.taskflow.repository.UserSecurityRepository;
 import com.taskflow.security.CustomUserDetailsService;
 import com.taskflow.security.FreshAuthorityFilter;
 import com.taskflow.security.SpaCsrfTokenRequestHandler;
@@ -52,7 +53,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    SecurityContextRepository securityContextRepository,
-                                                   CustomUserDetailsService userDetailsService) throws Exception {
+                                                   CustomUserDetailsService userDetailsService,
+                                                   UserSecurityRepository userSecurityRepository) throws Exception {
         http
             .securityContext(context -> context.securityContextRepository(securityContextRepository))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
@@ -81,8 +83,8 @@ public class SecurityConfig {
                 .contentTypeOptions(Customizer.withDefaults())
                 .frameOptions(frame -> frame.deny())
             )
-            // Right after the session is loaded, refresh the user's roles from the database
-            .addFilterAfter(new FreshAuthorityFilter(userDetailsService), SecurityContextHolderFilter.class);
+            // Right after the session is loaded: refresh roles, drop revoked sessions, enforce a forced password change
+            .addFilterAfter(new FreshAuthorityFilter(userDetailsService, userSecurityRepository), SecurityContextHolderFilter.class);
 
         return http.build();
     }

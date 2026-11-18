@@ -4,24 +4,34 @@ import com.jayway.jsonpath.JsonPath;
 import com.taskflow.model.Role;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-/** Admin password reset (password and lockout only: sessions and forced change are not part of this version). */
+/** Admin password reset, the forced change that follows it, and ending sessions when a password changes. */
 class AdminPasswordResetTest extends IntegrationTestBase {
 
     private static final String TEMP_PASSWORD = "temporary-pass-1";
+    private static final String NEW_PASSWORD = "my-own-new-password-1";
 
     @Test
-    void adminReset_replacesThePassword_andClearsLockout() throws Exception {
+    void adminReset_endsTheUsersSessions_clearsLockout_andForcesAPasswordChange() throws Exception {
         Client admin = login(createUserInDatabase("admin", Role.ROLE_ADMIN));
         String victim = createUserInDatabase("forgetful", Role.ROLE_EMPLOYEE);
+        long victimId = idOf(victim);
+
+        // The user is logged in somewhere, and has also been locked out by wrong guesses elsewhere
+        Client oldSession = login(victim);
+        mvc.perform(get("/api/auth/me").with(oldSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passwordChangeRequired").value(false));
 
         RequestPostProcessor fromOneAddress = request -> {
             request.setRemoteAddr("203.0.113.61"); // keeps these failures off other tests' IP counters
@@ -33,17 +43,61 @@ class AdminPasswordResetTest extends IntegrationTestBase {
         }
         loginAttempt(guesser, fromOneAddress, victim, PASSWORD).andExpect(status().isTooManyRequests());
 
-        mvc.perform(put("/api/admin/users/{id}/password", idOf(victim))
+        // The admin resets it
+        mvc.perform(put("/api/admin/users/{id}/password", victimId)
                         .with(admin)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"temporaryPassword\":\"%s\"}".formatted(TEMP_PASSWORD)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.username").value(victim))
+                .andExpect(jsonPath("$.passwordChangeRequired").value(true))
                 .andExpect(jsonPath("$.temporaryPassword").doesNotExist()); // only returned when generated
 
-        // Lockout cleared: the old password is simply wrong now, and the new one works
+        // The user is logged out immediately: their existing session no longer works
+        mvc.perform(get("/api/auth/me").with(oldSession)).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/projects").with(oldSession)).andExpect(status().isUnauthorized());
+
+        // The old password is gone. The lockout was cleared, so the temporary password gets straight in
         loginAttempt(guesser, fromOneAddress, victim, PASSWORD).andExpect(status().isUnauthorized());
-        loginAttempt(new Client(fetchCsrfToken()), fromOneAddress, victim, TEMP_PASSWORD).andExpect(status().isOk());
+        Client session = loginWith(victim, TEMP_PASSWORD, true);
+
+        // Until the password is changed, almost everything is refused with a clear, machine-readable code
+        mvc.perform(get("/api/projects").with(session))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("PASSWORD_CHANGE_REQUIRED"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("PUT /api/auth/password")));
+        mvc.perform(post("/api/tasks/1/comments")
+                        .with(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":\"hello\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("PASSWORD_CHANGE_REQUIRED"));
+
+        // ...but they can see who they are, and that a change is needed
+        mvc.perform(get("/api/auth/me").with(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passwordChangeRequired").value(true));
+
+        // The temporary password can't be kept
+        mvc.perform(put("/api/auth/password")
+                        .with(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"%s\",\"newPassword\":\"%s\"}".formatted(TEMP_PASSWORD, TEMP_PASSWORD)))
+                .andExpect(status().isBadRequest());
+
+        // Choosing a new password lifts the restriction on that same session
+        mvc.perform(put("/api/auth/password")
+                        .with(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"%s\",\"newPassword\":\"%s\"}".formatted(TEMP_PASSWORD, NEW_PASSWORD)))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/projects").with(session)).andExpect(status().isOk());
+        mvc.perform(get("/api/auth/me").with(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passwordChangeRequired").value(false));
+
+        // And the next login is normal
+        loginWith(victim, NEW_PASSWORD, false);
     }
 
     @Test
@@ -60,11 +114,7 @@ class AdminPasswordResetTest extends IntegrationTestBase {
                 .andReturn();
         String generated = JsonPath.read(result.getResponse().getContentAsString(), "$.temporaryPassword");
 
-        mvc.perform(post("/api/auth/login")
-                        .with(new Client(fetchCsrfToken()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"%s\",\"password\":\"%s\"}".formatted(victim, generated)))
-                .andExpect(status().isOk());
+        loginWith(victim, generated, true);
     }
 
     @Test
@@ -84,10 +134,11 @@ class AdminPasswordResetTest extends IntegrationTestBase {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isUnauthorized());
 
-        // Not your own account
+        // Not your own account (that needs the current password, via PUT /api/auth/password)
         mvc.perform(put("/api/admin/users/{id}/password", idOf(adminName))
                         .with(admin).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isConflict());
+        mvc.perform(get("/api/auth/me").with(admin)).andExpect(status().isOk()); // still logged in
 
         // Unknown user, and passwords that are too short or blank
         mvc.perform(put("/api/admin/users/{id}/password", 999_999_999L)
@@ -101,11 +152,44 @@ class AdminPasswordResetTest extends IntegrationTestBase {
                 .andExpect(status().isBadRequest());
     }
 
-    private ResultActions loginAttempt(Client client, RequestPostProcessor extra, String username, String password)
-            throws Exception {
+    @Test
+    void changingYourOwnPassword_endsYourOtherSessions_butNotThisOne() throws Exception {
+        String user = createUserInDatabase("twodevices", Role.ROLE_EMPLOYEE);
+        Client laptop = login(user);
+        Client phone = login(user);
+
+        mvc.perform(put("/api/auth/password")
+                        .with(laptop)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"%s\",\"newPassword\":\"%s\"}".formatted(PASSWORD, NEW_PASSWORD)))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/auth/me").with(laptop)).andExpect(status().isOk());
+        mvc.perform(get("/api/auth/me").with(phone)).andExpect(status().isUnauthorized());
+    }
+
+    // ------------------------------- helpers -------------------------------
+
+    private org.springframework.test.web.servlet.ResultActions loginAttempt(
+            Client client, RequestPostProcessor extra, String username, String password) throws Exception {
         return mvc.perform(post("/api/auth/login")
                 .with(client).with(extra)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"username\":\"%s\",\"password\":\"%s\"}".formatted(username, password)));
+    }
+
+    /** Logs in with a specific password and checks what the response says about a required change. */
+    private Client loginWith(String username, String password, boolean changeRequired) throws Exception {
+        Client client = new Client(fetchCsrfToken());
+        MvcResult result = mvc.perform(post("/api/auth/login")
+                        .with(client)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"%s\",\"password\":\"%s\"}".formatted(username, password)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passwordChangeRequired").value(changeRequired))
+                .andReturn();
+        client.session = (MockHttpSession) result.getRequest().getSession(false);
+        assertNotNull(client.session);
+        return client;
     }
 }

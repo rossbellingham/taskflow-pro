@@ -55,8 +55,10 @@ public class AdminUserController {
      * Resets someone else's password (for example after they forgot it). Send {"temporaryPassword":"..."}
      * (10 to 72 characters), or {} to have the server generate one, which is returned once in the response.
      *
-     * Their login lockout, if any, is cleared. There is no email, so the admin must pass the password to
-     * the user themselves. Existing sessions of that user keep working.
+     * Effects: the user is logged out everywhere immediately; their login lockout, if any, is cleared;
+     * and when they log in with the temporary password (login returns passwordChangeRequired: true) every
+     * endpoint except PUT /api/auth/password answers 403 PASSWORD_CHANGE_REQUIRED until they pick a new one.
+     * There is no email, so the admin must pass the temporary password to the user themselves.
      * Resetting your own password here is refused; use PUT /api/auth/password.
      */
     @PutMapping("/{id}/password")
@@ -74,6 +76,7 @@ public class AdminUserController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", id);
         body.put("username", reset.username());
+        body.put("passwordChangeRequired", true);
         if (reset.generatedPassword() != null) {
             body.put("temporaryPassword", reset.generatedPassword());
         }

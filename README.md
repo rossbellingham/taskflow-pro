@@ -11,7 +11,10 @@ against a real PostgreSQL in Docker.
 ## Features
 
 - **Authentication:** register, log in and log out; server-side sessions; BCrypt password hashing
-- **Account security:** change your own password; failed logins are rate limited
+- **Account security:** change your own password (this logs you out of your other sessions); failed logins
+  are rate limited
+- **Admin password reset:** an admin sets a temporary password for a user, who is logged out everywhere and
+  must choose a new password at next login
 - **Swagger UI:** an interactive page for trying every endpoint from the browser
 - **Roles:** `ROLE_ADMIN`, `ROLE_MANAGER`, `ROLE_EMPLOYEE`, with admin endpoints to manage them
 - **Projects:** a manager plus a group of employees; only members can see a project
@@ -35,7 +38,7 @@ against a real PostgreSQL in Docker.
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/rossbellingham/taskflow-pro.git
+git clone https://github.com/YOUR-USERNAME/taskflow-pro.git
 cd taskflow-pro
 cp .env.example .env        # then edit .env and set DB_PASSWORD
 ```
@@ -99,6 +102,7 @@ Endpoints other than the public auth ones need a logged-in session (the `JSESSIO
 | PUT | `/api/auth/password` | logged-in user (needs the current password) |
 | GET | `/api/admin/users` | admin |
 | PUT | `/api/admin/users/{id}/roles` | admin |
+| PUT | `/api/admin/users/{id}/password` | admin (resets another user's password, see below) |
 | POST | `/api/projects` | admin (names the manager) |
 | GET | `/api/projects`, `/api/projects/{id}` | project participants (admins: all) |
 | PUT | `/api/projects/{id}` | project manager, admin (only an admin can change the manager) |
@@ -136,6 +140,20 @@ For example: `?q=login&priority=HIGH&sort=dueDate,asc&page=0&size=20`.
 that don't match a participant (unknown names, people outside the project, email addresses, yourself)
 stay plain text without an error. Editing a comment recalculates the tags. There are no email or push
 notifications: tagged people see the comment in `GET /api/mentions` while they can still see the project.
+
+**Password reset (admin).** There is no email, so a forgotten password is handled by an admin:
+
+```
+PUT /api/admin/users/{id}/password
+{"temporaryPassword":"at-least-10-characters"}     or     {}   (the server generates one)
+```
+
+The user is logged out everywhere at once and any login lockout is cleared. The temporary password is
+returned only when it was generated, and the admin passes it to the user. After logging in with it, the
+response says `"passwordChangeRequired": true` (so does `GET /api/auth/me`), and every `/api` endpoint
+except `PUT /api/auth/password`, `GET /api/auth/me` and logout answers `403` with
+`"code": "PASSWORD_CHANGE_REQUIRED"` until the user chooses a new password. Admins can't reset their own
+password this way; they use the normal change-password endpoint.
 
 The project, task, comment and admin-user lists are paginated: add `?page=0&size=20` (pages start at 0,
 size is capped at 100). They return `content` plus `page`, `size`, `totalElements` and `totalPages`,
@@ -197,6 +215,12 @@ Flyway migrations, and exercise the API end to end:
   deployment would need Redis. The same limit applies to wrong current-password guesses when changing a
   password.
 - **Password changes need the current password**, so a stolen session alone can't take over an account.
+- **Changing or resetting a password ends sessions.** Each session records when it was logged in, and the
+  `user_security` table records the moment before which a user's sessions no longer count. The check runs
+  on every request, so it works without a session store and needs no change to the `users` table.
+- **A reset password is temporary.** The admin knows it, so it can't be kept: the user is held to a
+  password change (enforced by the server, not left to a front end to remember). Admins can't reset their
+  own account this way, since that would skip the current-password check.
 - **Pagination is capped**, so a client can't request unbounded pages.
 - **Sorting accepts a fixed list of fields**, never raw column names, so clients can't probe the schema or
   crash the query. Priority and status sort by importance through read-only columns that PostgreSQL
@@ -224,7 +248,11 @@ Flyway migrations, and exercise the API end to end:
 ## Roadmap
 
 - A server-rendered web UI (Thymeleaf) alongside the API
-- Ending a user's other sessions when their password changes
+- Self-service "forgot password" by email (the admin reset covers it for now)
 - Email or push notifications for mentions
 - A "my tasks across all projects" view
 - A Dockerfile for the app itself
+
+## License
+
+Choose a licence (for example MIT) and add a `LICENSE` file, or remove this section.

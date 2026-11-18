@@ -6,7 +6,9 @@ import com.taskflow.exception.ConflictException;
 import com.taskflow.exception.NotFoundException;
 import com.taskflow.model.Role;
 import com.taskflow.model.User;
+import com.taskflow.model.UserSecurity;
 import com.taskflow.repository.UserRepository;
+import com.taskflow.repository.UserSecurityRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -29,11 +31,15 @@ public class UserService {
     private static final int TEMP_PASSWORD_LENGTH = 16;
 
     private final UserRepository userRepository;
+    private final UserSecurityRepository userSecurityRepository;
     private final PasswordEncoder passwordEncoder;
     private final SecureRandom random = new SecureRandom();
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository,
+                       UserSecurityRepository userSecurityRepository,
+                       PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
+        this.userSecurityRepository = userSecurityRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -75,12 +81,16 @@ public class UserService {
             return false;
         }
         if (passwordEncoder.matches(newPassword, user.getPassword())) {
-            //TODO: Handle this on the page once UI is implemented
             throw new BadRequestException("The new password must be different from the current one");
         }
 
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
+
+        // Clears a forced-change flag, and ends the user's other sessions (the caller keeps theirs)
+        UserSecurity security = securityOf(user.getId());
+        security.passwordChangedByUser();
+        userSecurityRepository.save(security);
         return true;
     }
 
@@ -88,10 +98,10 @@ public class UserService {
     public record PasswordReset(String username, String generatedPassword) {}
 
     /**
-     * An admin sets a new password for another user. Their existing sessions are NOT ended, and they are not
-     * forced to change it, so the admin should pass it on and ask them to change it.
+     * An admin sets a temporary password for another user. The user is logged out everywhere straight away
+     * and, after logging in with the temporary password, can only change it (see FreshAuthorityFilter).
      *
-     * @param requestedPassword the temporary password, or "{}" to have one generated
+     * @param requestedPassword the temporary password, or null to have one generated
      * @throws ConflictException when the admin targets their own account: that must go through the
      *         change-password endpoint, which asks for the current password
      */
@@ -101,7 +111,6 @@ public class UserService {
                 .orElseThrow(() -> new NotFoundException("User not found"));
 
         if (target.getUsername().equalsIgnoreCase(actingUsername)) {
-            //TODO: Handle on the page once UI implemented
             throw new ConflictException("Use PUT /api/auth/password to change your own password");
         }
 
@@ -109,10 +118,26 @@ public class UserService {
         target.setPassword(passwordEncoder.encode(generated != null ? generated : requestedPassword));
         userRepository.save(target);
 
+        UserSecurity security = securityOf(target.getId());
+        security.passwordResetByAdmin();
+        userSecurityRepository.save(security);
+
         // Audit trail. Never log the password itself.
-        log.info("Admin '{}' reset the password of user '{}' (userID {})",
+        log.info("Admin '{}' reset the password of user '{}' (id {}); their sessions were ended",
                 actingUsername, target.getUsername(), target.getId());
         return new PasswordReset(target.getUsername(), generated);
+    }
+
+    /** True while the user has a temporary password they must replace. */
+    @Transactional(readOnly = true)
+    public boolean isPasswordChangeRequired(String username) {
+        return userSecurityRepository.findByUsername(username)
+                .map(UserSecurity::isMustChangePassword)
+                .orElse(false);
+    }
+
+    private UserSecurity securityOf(Long userId) {
+        return userSecurityRepository.findById(userId).orElseGet(() -> new UserSecurity(userId));
     }
 
     private String generatePassword() {
@@ -135,7 +160,7 @@ public class UserService {
                 .orElseThrow(() -> new NotFoundException("User not found"));
 
         // Stops an admin locking themselves out. It also guarantees at least one admin always
-        // remains, because only an admin can change roles, and they can't remove their own.
+        // remains, because only an admin can change roles and they can't remove their own.
         boolean isSelf = target.getUsername().equalsIgnoreCase(actingUsername);
         if (isSelf && !newRoles.contains(Role.ROLE_ADMIN)) {
             throw new ConflictException("You cannot remove your own admin role");

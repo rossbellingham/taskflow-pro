@@ -5,6 +5,7 @@ import com.taskflow.dto.LoginRequest;
 import com.taskflow.dto.RegisterRequest;
 import com.taskflow.exception.BadRequestException;
 import com.taskflow.model.User;
+import com.taskflow.security.FreshAuthorityFilter;
 import com.taskflow.security.LoginAttemptService;
 import com.taskflow.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -96,15 +97,18 @@ public class AuthController {
         context.setAuthentication(auth);
         SecurityContextHolder.setContext(context);
         securityContextRepository.saveContext(context, request, response);
+        FreshAuthorityFilter.markSessionIssued(request);
 
+        // If passwordChangeRequired is true, the account has a temporary password and nothing but
+        // PUT /api/auth/password will work until it is changed
         return describe(auth);
     }
 
     /**
      * Changes the logged-in user's password. The current password must be supplied, so a stolen session
      * alone isn't enough to take over the account. Wrong current-password guesses are rate limited
-     * (5 per 15 minutes). The session id is rotated afterwards. Note that the user's OTHER sessions
-     * (other browsers) stay logged in until they expire.
+     * (5 per 15 minutes). The session id is rotated afterwards, and the user's OTHER sessions (other
+     * browsers) are ended. This is also the way out of a forced change after an admin reset.
      */
     @PutMapping("/password")
     public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest body,
@@ -125,6 +129,7 @@ public class AuthController {
         if (request.getSession(false) != null) {
             request.changeSessionId();
         }
+        FreshAuthorityFilter.markSessionIssued(request); // this session survives; older ones don't
         return ResponseEntity.noContent().build();
     }
 
@@ -148,6 +153,9 @@ public class AuthController {
         List<String> roles = authentication.getAuthorities().stream()
                 .map(a -> a.getAuthority().replaceFirst("^ROLE_", ""))
                 .toList();
-        return Map.of("username", authentication.getName(), "roles", roles);
+        return Map.of(
+                "username", authentication.getName(),
+                "roles", roles,
+                "passwordChangeRequired", userService.isPasswordChangeRequired(authentication.getName()));
     }
 }
